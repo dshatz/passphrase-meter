@@ -1,0 +1,31 @@
+[versions]
+agp = "9.1.1"
+android-compileSdk = "37"
+android-minSdk = "24"
+kotlin = "2.4.21"
+jni = "2.4.0-Beta02"
+publish = "0.37.0"
+
+[libraries]
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version = "0.8.0" }
+androidx-test-runner = { module = "androidx.test:runner", version = "1.6.2" }
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+android-gradle-api = { module = "com.android.tools.build:gradle-api", version.ref = "agp" }
+vanniktech-maven-publish = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "publish" }
+jni-ksp = { module = "com.dshatz.kni:ksp", version.ref = "jni" }
+jni = { module = "com.dshatz.kni:jni", version.ref = "jni" }
+jni-annotations = { module = "com.dshatz.kni:annotations", version.ref = "jni" }
+jni-buffers = { module = "com.dshatz.kni:buffers", version.ref = "jni" }
+jni-serializers = { module = "com.dshatz.kni:serialization", version.ref = "jni" }
+
+[plugins]
+android-lib = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+mp = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version = "2.3.9" }
+publish = { id = "com.vanniktech.maven.publish", version.ref = "publish" }
+kni = { id = "com.dshatz.kni", version.ref = "jni" }
+
+
+[bundles]
+jni = [ "jni", "jni-annotations" ]

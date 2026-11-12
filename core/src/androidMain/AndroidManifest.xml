@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Captures the application Context for PassphraseTester.loadDictionaryFromUri(). -->
+        <provider
+            android:name="com.dshatz.passphrasemeter.PassphraseMeterContextProvider"
+            android:authorities="${applicationId}.passphrasemeter-context"
+            android:exported="false" />
+    </application>
+</manifest>

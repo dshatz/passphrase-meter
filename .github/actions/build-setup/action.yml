@@ -1,0 +1,39 @@
+name: "Setup build"
+description: JDK, Gradle, the Kotlin/Native cache and the prebuilt native artifact (see workflows/native.yml).
+inputs:
+  configuration_cache_key:
+    required: true
+    description: Encryption key for gradle configuration cache.
+  download_native:
+    required: false
+    default: "true"
+    description: Download the "native" artifact (libzxcvbn.a, dictionaries) into core/native.
+runs:
+  using: "composite"
+  steps:
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v6
+      with:
+        cache-read-only: false
+        cache-encryption-key: ${{ inputs.configuration_cache_key }}
+
+    # Kotlin/Native distribution + per-target toolchains/sysroots (several GB, slow to download).
+    - name: Cache Kotlin/Native
+      uses: actions/cache@v4
+      with:
+        path: ~/.konan
+        key: konan-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('gradle/libs.versions.toml') }}
+        restore-keys: konan-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+
+    - name: Download native artifact
+      if: inputs.download_native == 'true'
+      uses: actions/download-artifact@v8
+      with:
+        name: native
+        path: core/native

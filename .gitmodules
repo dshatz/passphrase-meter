@@ -1,0 +1,3 @@
+[submodule "core/zxcvbn"]
+	path = core/zxcvbn
+	url = https://github.com/tsyrogit/zxcvbn-c.git

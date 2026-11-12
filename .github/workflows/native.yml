@@ -1,0 +1,44 @@
+name: Native
+
+# Builds everything native once, on Linux, for every target (Apple targets via zig), and uploads it
+# as the "native" artifact that the test and publish jobs download into core/native:
+# - zxcvbn/<target>/libzxcvbn.a and the patched header (zxcvbn/src) used by cinterop
+# - test dictionaries and Wultra's PIN reference results
+
+on:
+  workflow_call:
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Setup
+        uses: ./.github/actions/build-setup
+        with:
+          configuration_cache_key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
+          download_native: false
+      - name: Setup zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Build zxcvbn (all targets)
+        run: scripts/build-zxcvbn.sh
+      - name: Build dictionaries
+        run: scripts/build-dictionaries.sh en czsk
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: native
+          if-no-files-found: error
+          retention-days: 5
+          path: |
+            core/native/zxcvbn/*/libzxcvbn.a
+            core/native/zxcvbn/src/
+            core/native/dictionaries/*.dict
+            core/native/test-resources/

@@ -1,0 +1,22 @@
+headers = zxcvbn.h
+package = external.zxcvbn
+# Must match how libzxcvbn.a is built (scripts/build-zxcvbn.sh): exposes ZxcvbnInit/ZxcvbnUnInit as real functions.
+compilerOpts = -DUSE_DICT_FILE
+noStringConversion = ZxcvbnMatch
+staticLibraries = libzxcvbn.a
+---
+#ifdef _WIN32
+#include <windows.h>
+static SRWLOCK DictLock = SRWLOCK_INIT;
+static inline void zxcvbn_read_lock(void)    { AcquireSRWLockShared(&DictLock); }
+static inline void zxcvbn_read_unlock(void)  { ReleaseSRWLockShared(&DictLock); }
+static inline void zxcvbn_write_lock(void)   { AcquireSRWLockExclusive(&DictLock); }
+static inline void zxcvbn_write_unlock(void) { ReleaseSRWLockExclusive(&DictLock); }
+#else
+#include <pthread.h>
+static pthread_rwlock_t DictLock = PTHREAD_RWLOCK_INITIALIZER;
+static inline void zxcvbn_read_lock(void)    { pthread_rwlock_rdlock(&DictLock); }
+static inline void zxcvbn_read_unlock(void)  { pthread_rwlock_unlock(&DictLock); }
+static inline void zxcvbn_write_lock(void)   { pthread_rwlock_wrlock(&DictLock); }
+static inline void zxcvbn_write_unlock(void) { pthread_rwlock_unlock(&DictLock); }
+#endif

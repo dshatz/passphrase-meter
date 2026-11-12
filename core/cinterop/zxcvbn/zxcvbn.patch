@@ -1,0 +1,489 @@
+passphrase-meter patches for tsyrogit/zxcvbn-c (applied by scripts/build-zxcvbn.sh to a copy; the submodule stays pristine).
+- load any dictgen dictionary (no compiled-in CRC/size), from file, memory buffer or file descriptor;
+  files are mapped read-only and used in place (no copy)
+- no dictionary loaded: skip dictionary matching instead of crashing (Wultra-compatible)
+
+--- a/zxcvbn.c
++++ b/zxcvbn.c
+@@ -22,6 +22,10 @@
+  *
+  **********************************************************************************/
+ 
++/* passphrase-meter patch: POSIX APIs (mmap, fstat, open) under strict -std=c99. */
++#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
++#define _POSIX_C_SOURCE 200809L
++#endif
+ #include <zxcvbn.h>
+ #include <ctype.h>
+ #include <string.h>
+@@ -289,7 +293,29 @@
+ /* of the file. */
+ #include "dict-crc.h"
+ 
+-#define MAX_DICT_FILE_SIZE  (100+WORD_FILE_SIZE)
++/* passphrase-meter patch: CHARSET_SIZE in dict-crc.h is derived from the default dictionary;
++ * other dictionaries may need more, so use the maximum dictgen can produce (8 bytes * 8 + 1). */
++#undef CHARSET_SIZE
++#define CHARSET_SIZE 65
++
++#include <errno.h>
++#include <fcntl.h>
++#include <sys/stat.h>
++#ifdef _WIN32
++#include <io.h>
++#include <windows.h>
++#define ZX_READ(f, b, n) _read(f, b, n)
++#define ZX_LSEEK(f, o, w) _lseeki64(f, o, w)
++#define ZX_OPEN(p) _open(p, _O_RDONLY | _O_BINARY)
++#define ZX_CLOSE(f) _close(f)
++#else
++#include <unistd.h>
++#include <sys/mman.h>
++#define ZX_READ(f, b, n) read(f, b, n)
++#define ZX_LSEEK(f, o, w) lseek(f, o, w)
++#define ZX_OPEN(p) open(p, O_RDONLY)
++#define ZX_CLOSE(f) close(f)
++#endif
+ #define CHK_INIT 0xffffffffffffffffULL
+ 
+ /* Static table used for the crc implementation. */
+@@ -341,117 +367,298 @@
+  *  Filename    Name of the file to read.
+  * Returns 1 on success, 0 on error
+  */
+-int ZxcvbnInit(const char *Filename)
++/* passphrase-meter patch: dictionaries are not tied to the CRC compiled into dict-crc.h.
++ * Any dictionary produced by dictgen (-b) can be loaded, from a file, a memory buffer or a
++ * file descriptor. Loading replaces a previously loaded dictionary. The header is validated
++ * and all sizes are bounds-checked against the input length, but the trie contents are not:
++ * only load dictionaries from trusted sources. */
++#define DICT_HEADER_WORDS 10
++#define DICT_MAX_FILE_SIZE (64u * 1024u * 1024u)
++
++/* Non-null when DictNodes points into a read-only file mapping instead of a malloc'd block. */
++static void *DictMap;
++static size_t DictMapLen;
++
++/* Validates the header of Len bytes of dictionary data and returns the size of the data that
++ * follows it (0 if invalid). */
++static uint64_t CheckDictHeader(const uint8_t *Data, size_t Len, unsigned int Hdr[DICT_HEADER_WORDS])
++{
++    uint64_t DictSize;
++    if (!Data || Len < DICT_HEADER_WORDS * sizeof(unsigned int))
++        return 0;
++    memcpy(Hdr, Data, DICT_HEADER_WORDS * sizeof(unsigned int));
++    if (Hdr[0] != MAGIC)
++        return 0;
++
++    /* Hdr: magic, nodes, child locs, ranks, word ends, child maps, child map entry size,
++     *      large end counts, small end counts, char set size */
++    if (Hdr[1] == 0 || Hdr[1] >= (1<<17))
++        return 0;
++    if (Hdr[2] >= (1<<BITS_CHILD_MAP_INDEX))
++        return 0;
++    if (Hdr[5] >= (1<<BITS_CHILD_PATT_INDEX))
++        return 0;
++    /* dictgen packs each child map into at most 8 bytes, so a node has at most 64 children. */
++    if (Hdr[6] == 0 || Hdr[6] > 8 || (Hdr[6]*8) < Hdr[9] || Hdr[9] >= CHARSET_SIZE)
++        return 0;
++    if (Hdr[7] >= (1<<9))
++        return 0;
++    if (Hdr[8] != Hdr[1])
++        return 0;
++
++    DictSize = (uint64_t)Hdr[1]*sizeof(unsigned int) + (uint64_t)Hdr[2]*sizeof(unsigned int) +
++               (uint64_t)Hdr[3]*sizeof(unsigned short) + Hdr[4] + (uint64_t)Hdr[5]*Hdr[6] +
++               Hdr[7] + Hdr[8] + Hdr[9];
++    if (DictSize == 0 || DictSize > Len - DICT_HEADER_WORDS * sizeof(unsigned int) || DictSize > DICT_MAX_FILE_SIZE)
++        return 0;
++    return DictSize;
++}
++
++/* Replaces the current dictionary with the data at Nodes (validated by CheckDictHeader). The data
++ * is only read, never written, so it may live in a read-only mapping. */
++static void SetDict(unsigned int *Nodes, const unsigned int Hdr[DICT_HEADER_WORDS], void *Map, size_t MapLen)
++{
++    ZxcvbnUnInit();
++    NumNodes = Hdr[1];
++    NumChildLocs = Hdr[2];
++    NumRanks = Hdr[3];
++    NumWordEnd = Hdr[4];
++    NumChildMaps = Hdr[5];
++    SizeChildMapEntry = Hdr[6];
++    NumLargeCounts = Hdr[7];
++    NumSmallCounts = Hdr[8];
++    SizeCharSet = Hdr[9];
++
++    DictNodes = Nodes;
++    ChildLocs = DictNodes + NumNodes;
++    Ranks = (unsigned short *)(ChildLocs + NumChildLocs);
++    WordEndBits = (unsigned char *)(Ranks + NumRanks);
++    ChildMap = (unsigned char*)(WordEndBits + NumWordEnd);
++    EndCountLge = ChildMap + NumChildMaps*SizeChildMapEntry;
++    EndCountSml = EndCountLge + NumLargeCounts;
++    CharSet = (char *)EndCountSml + NumSmallCounts; /* only indexed, never used as a C string */
++    DictMap = Map;
++    DictMapLen = MapLen;
++}
++
++/* Copies caller-owned data. */
++static int LoadDictFromBuffer(const uint8_t *Data, size_t Len)
+ {
+-    FileHandle f;
+-    uint64_t Crc = CHK_INIT;
+-    if (DictNodes)
+-        return 1;
+-    MyOpenFile(f, Filename);
+-    if (f)
+-    {
+-        unsigned int i, DictSize;
+-
+-        /* Get magic number */
+-        if (!MyReadFile(f, &i, sizeof i))
+-            i = 0;
+-
+-        /* Get header data */
+-        if (!MyReadFile(f, &NumNodes, sizeof NumNodes))
+-            i = 0;
+-        if (!MyReadFile(f, &NumChildLocs, sizeof NumChildLocs))
+-            i = 0;
+-        if (!MyReadFile(f, &NumRanks, sizeof NumRanks))
+-            i = 0;
+-        if (!MyReadFile(f, &NumWordEnd, sizeof NumWordEnd))
+-            i = 0;
+-        if (!MyReadFile(f, &NumChildMaps, sizeof NumChildMaps))
+-            i = 0;
+-        if (!MyReadFile(f, &SizeChildMapEntry, sizeof SizeChildMapEntry))
+-            i = 0;
+-        if (!MyReadFile(f, &NumLargeCounts, sizeof NumLargeCounts))
+-            i = 0;
+-        if (!MyReadFile(f, &NumSmallCounts, sizeof NumSmallCounts))
+-            i = 0;
+-        if (!MyReadFile(f, &SizeCharSet, sizeof SizeCharSet))
+-            i = 0;
+-
+-        /* Validate the header data */
+-        if (NumNodes >= (1<<17))
+-            i = 1;
+-        if (NumChildLocs >= (1<<BITS_CHILD_MAP_INDEX))
+-            i = 2;
+-        if (NumChildMaps >= (1<<BITS_CHILD_PATT_INDEX))
+-            i = 3;
+-        if ((SizeChildMapEntry*8) < SizeCharSet)
+-            i = 4;
+-        if (NumLargeCounts >= (1<<9))
+-            i = 5;
+-        if (NumSmallCounts != NumNodes)
+-            i = 6;
++    unsigned int Hdr[DICT_HEADER_WORDS];
++    uint64_t DictSize = CheckDictHeader(Data, Len, Hdr);
++    unsigned int *Nodes;
++    if (!DictSize)
++        return 0;
++    Nodes = MallocFn(unsigned int, (size_t)(DictSize / sizeof(unsigned int) + 1));
++    if (!Nodes)
++        return 0;
++    memcpy(Nodes, Data + sizeof Hdr, (size_t)DictSize);
++    SetDict(Nodes, Hdr, 0, 0);
++    return 1;
++}
++
++/* Takes ownership of a malloc'd Buf holding a whole dictionary file: moves the data over the
++ * header and keeps the block, instead of allocating and copying again. Frees Buf on failure. */
++static int LoadDictAdopt(uint8_t *Buf, size_t Len)
++{
++    unsigned int Hdr[DICT_HEADER_WORDS];
++    uint64_t DictSize = CheckDictHeader(Buf, Len, Hdr);
++    uint8_t *Shrunk;
++    if (!DictSize)
++    {
++        free(Buf);
++        return 0;
++    }
++    memmove(Buf, Buf + sizeof Hdr, (size_t)DictSize);
++    Shrunk = (uint8_t *)realloc(Buf, (size_t)DictSize);
++    if (Shrunk)
++        Buf = Shrunk;
++    SetDict((unsigned int *)Buf, Hdr, 0, 0);
++    return 1;
++}
++
++int ZxcvbnInitFromBuffer(const void *Data, size_t Len)
++{
++    return LoadDictFromBuffer((const uint8_t *)Data, Len);
++}
+ 
+-        if (i != MAGIC)
++/* Maps Length bytes at Offset of Fd read-only and uses them in place.
++ * Returns 1 if loaded, 0 if the data is not a valid dictionary, -1 if it cannot be mapped
++ * (pipe, unsupported, misaligned) and should be read instead. */
++static int LoadDictMapped(int Fd, long long Offset, long long Length)
++{
++    unsigned int Hdr[DICT_HEADER_WORDS];
++    long long Gran, Aligned, Delta;
++    size_t MapLen;
++    uint8_t *Map, *Data;
++#ifdef _WIN32
++    struct _stat64 St;
++    SYSTEM_INFO Si;
++    HANDLE Mapping;
++    if (_fstat64(Fd, &St) != 0 || !(St.st_mode & _S_IFREG))
++        return -1;
++    GetSystemInfo(&Si);
++    Gran = Si.dwAllocationGranularity;
++#else
++    struct stat St;
++    if (fstat(Fd, &St) != 0 || !S_ISREG(St.st_mode))
++        return -1;
++    Gran = sysconf(_SC_PAGESIZE);
++    if (Gran <= 0)
++        return -1;
++#endif
++    if (Offset < 0)
++    {
++        Offset = ZX_LSEEK(Fd, 0, SEEK_CUR);
++        if (Offset < 0)
++            return -1;
++    }
++    if (Length < 0)
++        Length = (long long)St.st_size - Offset;
++    if (Length <= 0 || Offset + Length > (long long)St.st_size || Length > (long long)DICT_MAX_FILE_SIZE)
++        return -1;
++    Aligned = Offset - Offset % Gran;
++    Delta = Offset - Aligned;
++    MapLen = (size_t)(Delta + Length);
++#ifdef _WIN32
++    Mapping = CreateFileMappingW((HANDLE)_get_osfhandle(Fd), NULL, PAGE_READONLY, 0, 0, NULL);
++    if (!Mapping)
++        return -1;
++    Map = (uint8_t *)MapViewOfFile(Mapping, FILE_MAP_READ, (DWORD)((unsigned long long)Aligned >> 32),
++                                   (DWORD)(Aligned & 0xffffffffu), MapLen);
++    CloseHandle(Mapping); /* the view keeps the mapping alive */
++    if (!Map)
++        return -1;
++#else
++    Map = (uint8_t *)mmap(NULL, MapLen, PROT_READ, MAP_PRIVATE, Fd, (off_t)Aligned);
++    if (Map == (uint8_t *)MAP_FAILED)
++        return -1;
++#endif
++    Data = Map + Delta;
++    /* The node tables are read as 32-bit words. */
++    if (((uintptr_t)(Data + sizeof Hdr)) % sizeof(unsigned int) != 0 || !CheckDictHeader(Data, (size_t)Length, Hdr))
++    {
++        int Misaligned = ((uintptr_t)(Data + sizeof Hdr)) % sizeof(unsigned int) != 0;
++#ifdef _WIN32
++        UnmapViewOfFile(Map);
++#else
++        munmap(Map, MapLen);
++#endif
++        return Misaligned ? -1 : 0;
++    }
++    SetDict((unsigned int *)(Data + sizeof Hdr), Hdr, Map, MapLen);
++    return 1;
++}
++
++/* Reads up to Max bytes (or until EOF when Max < 0) from Fd into a malloc'd buffer. */
++static uint8_t *ReadAll(int Fd, long long Max, size_t *OutLen)
++{
++    size_t Cap = (Max >= 0) ? (size_t)Max : 256u * 1024u;
++    size_t Len = 0;
++    uint8_t *Buf;
++    if (Max > (long long)DICT_MAX_FILE_SIZE)
++        return 0;
++    Buf = (uint8_t *)malloc(Cap ? Cap : 1);
++    if (!Buf)
++        return 0;
++    for(;;)
++    {
++        int n;
++        if (Len == Cap)
+         {
+-            MyCloseFile(f);
+-            return 0;
+-        }
+-        Crc = CalcCrc64(Crc, &i,    sizeof i);
+-        Crc = CalcCrc64(Crc, &NumNodes,     sizeof NumNodes);
+-        Crc = CalcCrc64(Crc, &NumChildLocs, sizeof NumChildLocs);
+-        Crc = CalcCrc64(Crc, &NumRanks,     sizeof NumRanks);
+-        Crc = CalcCrc64(Crc, &NumWordEnd,   sizeof NumWordEnd);
+-        Crc = CalcCrc64(Crc, &NumChildMaps, sizeof NumChildMaps);
+-        Crc = CalcCrc64(Crc, &SizeChildMapEntry, sizeof SizeChildMapEntry);
+-        Crc = CalcCrc64(Crc, &NumLargeCounts,   sizeof NumLargeCounts);
+-        Crc = CalcCrc64(Crc, &NumSmallCounts,   sizeof NumSmallCounts);
+-        Crc = CalcCrc64(Crc, &SizeCharSet,      sizeof SizeCharSet);
+-
+-        DictSize = NumNodes*sizeof(*DictNodes) + NumChildLocs*sizeof(*ChildLocs) + NumRanks*sizeof(*Ranks) +
+-                   NumWordEnd + NumChildMaps*SizeChildMapEntry + NumLargeCounts + NumSmallCounts + SizeCharSet;
+-        if (DictSize < MAX_DICT_FILE_SIZE)
+-        {
+-            DictNodes = MallocFn(unsigned int, DictSize / sizeof(unsigned int) + 1);
+-            if (!MyReadFile(f, DictNodes, DictSize))
++            uint8_t *Nb;
++            if (Max >= 0 || Cap >= DICT_MAX_FILE_SIZE)
++                break;
++            Cap *= 2;
++            Nb = (uint8_t *)realloc(Buf, Cap);
++            if (!Nb)
+             {
+-                FreeFn(DictNodes);
+-                DictNodes = 0;
++                free(Buf);
++                return 0;
+             }
++            Buf = Nb;
+         }
+-        MyCloseFile(f);
+-
+-        if (!DictNodes)
+-            return 0;
+-        /* Check crc */
+-        Crc = CalcCrc64(Crc, DictNodes, DictSize);
+-        if (memcmp(&Crc, WordCheck, sizeof Crc))
+-        {
+-            /* File corrupted */
+-            FreeFn(DictNodes);
+-            DictNodes = 0;
++        do
++            n = (int)ZX_READ(Fd, Buf + Len, (unsigned int)((Cap - Len) > (1u<<20) ? (1u<<20) : (Cap - Len)));
++        while (n < 0 && errno == EINTR);
++        if (n < 0)
++        {
++            free(Buf);
+             return 0;
+         }
+-        fflush(stdout);
+-        /* Set pointers to the data */
+-        ChildLocs = DictNodes + NumNodes;
+-        Ranks = (unsigned short *)(ChildLocs + NumChildLocs);
+-        WordEndBits = (unsigned char *)(Ranks + NumRanks);
+-        ChildMap = (unsigned char*)(WordEndBits + NumWordEnd);
+-        EndCountLge = ChildMap + NumChildMaps*SizeChildMapEntry;
+-        EndCountSml = EndCountLge + NumLargeCounts;
+-        CharSet = (char *)EndCountSml + NumSmallCounts;
+-        CharSet[SizeCharSet] = 0;
+-        return 1;
++        if (n == 0)
++            break;
++        Len += (size_t)n;
+     }
+-    return 0;
++    *OutLen = Len;
++    return Buf;
+ }
++
++/**********************************************************************************
++ * Read the dictionary data from an open file descriptor. Offset >= 0 seeks there first
++ * (e.g. Android AssetFileDescriptor.startOffset); Length >= 0 limits how much is read,
++ * Length < 0 reads until EOF. The descriptor is not closed.
++ * Regular files are mapped read-only and used in place (no copy); anything else is read.
++ * Returns 1 on success, 0 on error
++ */
++int ZxcvbnInitFromFd(int Fd, long long Offset, long long Length)
++{
++    size_t Len = 0;
++    uint8_t *Buf;
++    int Mapped;
++    if (Fd < 0)
++        return 0;
++    Mapped = LoadDictMapped(Fd, Offset, Length);
++    if (Mapped >= 0)
++        return Mapped;
++    if (Offset >= 0 && ZX_LSEEK(Fd, Offset, SEEK_SET) < 0)
++        return 0;
++    Buf = ReadAll(Fd, Length, &Len);
++    if (!Buf)
++        return 0;
++    return LoadDictAdopt(Buf, Len);
++}
++
++/**********************************************************************************
++ * Read the dictionary data from the given file (mapped read-only when possible).
++ * Returns 1 on success, 0 on error
++ */
++int ZxcvbnInit(const char *Filename)
++{
++    int Fd, Ok;
++    if (!Filename)
++        return 0;
++    Fd = ZX_OPEN(Filename);
++    if (Fd < 0)
++        return 0;
++    Ok = ZxcvbnInitFromFd(Fd, 0, -1);
++    ZX_CLOSE(Fd); /* a mapping stays valid after closing the descriptor */
++    return Ok;
++}
++
++int ZxcvbnIsInit(void)
++{
++    return DictNodes != 0;
++}
++
+ /**********************************************************************************
+  * Free the data allocated by ZxcvbnInit().
+  */
+ void ZxcvbnUnInit(void)
+ {
+-    if (DictNodes)
++    if (DictMap)
++    {
++#ifdef _WIN32
++        UnmapViewOfFile(DictMap);
++#else
++        munmap(DictMap, DictMapLen);
++#endif
++    }
++    else if (DictNodes)
+         FreeFn(DictNodes);
+     DictNodes = 0;
++    DictMap = 0;
++    DictMapLen = 0;
+ }
+ 
+ #else
+@@ -902,6 +1109,11 @@
+  */
+ static void DictionaryMatch(ZxcMatch_t **Result, const uint8_t *Passwd, int Start, int MaxLen)
+ {
++#ifdef USE_DICT_FILE
++    /* passphrase-meter patch: no dictionary loaded -> no dictionary matches. */
++    if (!DictNodes)
++        return;
++#endif
+     DictWork_t Wrk;
+     DictMatchInfo_t Extra;
+ 
+--- a/zxcvbn.h
++++ b/zxcvbn.h
+@@ -1,5 +1,6 @@
+ #ifndef ZXCVBN_H_F98183CE2A01_INCLUDED
+ #define ZXCVBN_H_F98183CE2A01_INCLUDED
++#include <stddef.h>
+ /**********************************************************************************
+  * C implementation of the zxcvbn password strength estimation method.
+  * Copyright (c) 2015-2017 Tony Evans
+@@ -92,6 +93,25 @@
+ int ZxcvbnInit(const char *);
+ 
+ /**********************************************************************************
++ * passphrase-meter patch: load dictionary data (dictgen -b output) from memory.
++ * The data is copied. Replaces a previously loaded dictionary. Returns 1 if OK, 0 if error.
++ */
++int ZxcvbnInitFromBuffer(const void *Data, size_t Len);
++
++/**********************************************************************************
++ * passphrase-meter patch: load dictionary data from an open file descriptor.
++ * Offset >= 0 seeks there first, Length >= 0 limits the bytes read (< 0: until EOF).
++ * Regular files are mapped read-only and used in place; pipes etc. are read.
++ * The descriptor is not closed. Returns 1 if OK, 0 if error.
++ */
++int ZxcvbnInitFromFd(int Fd, long long Offset, long long Length);
++
++/**********************************************************************************
++ * passphrase-meter patch: returns 1 if a dictionary is loaded.
++ */
++int ZxcvbnIsInit(void);
++
++/**********************************************************************************
+  * Free the dictionnary data after use. Called once at program shutdown.
+  */
+ void ZxcvbnUnInit(void);
