@@ -12,7 +12,8 @@ on:
     paths-ignore:
       - '**.md'
 
-# Only enabled targets are tested: JVM + linuxX64 (common code, JNI, zxcvbn, PIN reference) on Linux, Android on an emulator.
+# Only enabled targets are tested: JVM + linuxX64 (common code, JNI, zxcvbn, PIN reference) on Linux,
+# macosArm64 + iosSimulatorArm64 on macOS (Apple Silicon), Android on an emulator.
 jobs:
   native:
     uses: ./.github/workflows/native.yml
@@ -37,6 +38,35 @@ jobs:
         if: always()
         with:
           name: test-report-ubuntu-latest
+          path: ./**/build/test-results/**/*.xml
+          retention-days: 5
+
+  test-apple:
+    # Apple Silicon runner: runs macosArm64 natively and iosSimulatorArm64 on a simulator.
+    needs: native
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup
+        uses: ./.github/actions/build-setup
+        with:
+          configuration_cache_key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
+      # The first iOS test run against a cold CoreSimulator can fail before any test runs
+      # (missing in-progress-results-generic.bin), so boot a simulator up front.
+      - name: Boot iOS simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for r,ds in d.items() if "iOS" in r for x in ds if x["name"].startswith("iPhone")))')
+          xcrun simctl bootstatus "$udid" -b
+      - name: Build and Test
+        run: ./gradlew :core:macosArm64Test :core:iosSimulatorArm64Test --continue
+      - name: Upload Test Report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-report-macos-latest
           path: ./**/build/test-results/**/*.xml
           retention-days: 5
 
@@ -77,6 +107,7 @@ jobs:
   publish-results:
     needs:
       - test-linux
+      - test-apple
       - test-android-emulator
     runs-on: ubuntu-latest
     if: always()
@@ -96,5 +127,6 @@ jobs:
           platform-hints: |
             {
               "test-report-ubuntu-latest/**/*.xml": "Linux",
+              "test-report-macos-latest/**/*.xml": "macOS / iOS (simulator)",
               "test-report-emulator-android/**/*.xml": "Android (emulator)"
             }

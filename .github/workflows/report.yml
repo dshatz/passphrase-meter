@@ -36,5 +36,6 @@ jobs:
           platform-hints: |
             {
               "test-report-ubuntu-latest/**/*.xml": "Linux",
+              "test-report-macos-latest/**/*.xml": "macOS / iOS (simulator)",
               "test-report-emulator-android/**/*.xml": "Android (emulator)"
             }
