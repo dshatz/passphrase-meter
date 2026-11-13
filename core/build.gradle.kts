@@ -3,6 +3,7 @@ import com.dshatz.kni.bundlesNatives
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.plugin.KotlinHierarchyBuilder
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
 import org.jetbrains.kotlin.konan.target.Family
 
 plugins {
@@ -154,4 +155,13 @@ fun KotlinNativeTarget.setupCinterop() {
 // Dictionaries available to tests via loadTestDictionary(TestDictionaries.X) (build-logic/test-dictionaries).
 testDictionaries {
     names.addAll("en", "cs", "ko", "th")
+}
+
+// CI boots a simulator early (in the background) and exports its UDID as SIM_UDID; run the iOS tests
+// on that already-booted device instead of letting Gradle boot (and later shut down) another one.
+providers.environmentVariable("SIM_UDID").orNull?.let { udid ->
+    tasks.withType<KotlinNativeSimulatorTest>().configureEach {
+        device.set(udid)
+        standalone.set(false)
+    }
 }
