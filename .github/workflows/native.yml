@@ -5,6 +5,10 @@ name: Native
 # - zxcvbn/<target>/libzxcvbn.a and the patched header (zxcvbn/src) used by cinterop
 # - dictionaries for every zxcvbn-ts language (+ their NOTICE), used by the tests and attached to releases
 # - Wultra's PIN reference results
+#
+# The outputs are cached by their inputs, so the build only runs when a script (which also pins the
+# zxcvbn-ts and Wultra commits), the zxcvbn patch/def, the zxcvbn-c submodule commit, the Kotlin
+# version or this workflow changes. Otherwise the cached outputs are just re-uploaded.
 
 on:
   workflow_call:
@@ -15,22 +19,51 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Submodules are only fetched when something has to be built (see "Fetch submodules").
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Compute cache key
+        id: key
+        run: |
+          {
+            git ls-tree HEAD core/zxcvbn
+            grep -E '^kotlin *=' gradle/libs.versions.toml
+            # Pinned upstream commits the dictionaries/test resources are downloaded from.
+            grep -E '^(ZXCVBN_TS|WULTRA)_SHA=' scripts/build-dictionaries.sh
+            sha256sum scripts/* core/cinterop/zxcvbn/* .github/workflows/native.yml
+          } > "$RUNNER_TEMP/native-inputs.txt"
+          cat "$RUNNER_TEMP/native-inputs.txt"
+          echo "key=native-v1-$(sha256sum "$RUNNER_TEMP/native-inputs.txt" | cut -c1-40)" >> "$GITHUB_OUTPUT"
+      - name: Restore native build
+        id: cache
+        uses: actions/cache@v4
         with:
-          submodules: true
+          key: ${{ steps.key.outputs.key }}
+          path: |
+            core/native/zxcvbn/*/libzxcvbn.a
+            core/native/zxcvbn/src/
+            core/native/dictionaries/*.dict
+            core/native/dictionaries/NOTICE-dictionaries.md
+            core/native/test-resources/
+      - name: Fetch submodules
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1
       - name: Setup
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: ./.github/actions/build-setup
         with:
           configuration_cache_key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
           download_native: false
       - name: Setup zig
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
       - name: Build zxcvbn (all targets)
+        if: steps.cache.outputs.cache-hit != 'true'
         run: scripts/build-zxcvbn.sh
       - name: Build dictionaries (all languages)
+        if: steps.cache.outputs.cache-hit != 'true'
         run: scripts/build-dictionaries.sh
       - name: Upload
         uses: actions/upload-artifact@v7
