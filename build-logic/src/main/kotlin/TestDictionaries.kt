@@ -10,7 +10,7 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
-/** `testDictionaries { }` - which zxcvbn dictionaries the tests can load. */
+/** `testDictionaries { }` - which zxcvbn dictionaries the tests can load */
 interface TestDictionariesExtension {
     /** Dictionary names; each is `<sourceDir>/<name>.dict`. */
     val names: ListProperty<String>
