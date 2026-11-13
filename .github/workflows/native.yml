@@ -3,7 +3,8 @@ name: Native
 # Builds everything native once, on Linux, for every target (Apple targets via zig), and uploads it
 # as the "native" artifact that the test and publish jobs download into core/native:
 # - zxcvbn/<target>/libzxcvbn.a and the patched header (zxcvbn/src) used by cinterop
-# - test dictionaries and Wultra's PIN reference results
+# - dictionaries for every zxcvbn-ts language (+ their NOTICE), used by the tests and attached to releases
+# - Wultra's PIN reference results
 
 on:
   workflow_call:
@@ -29,8 +30,8 @@ jobs:
           version: 0.17.0
       - name: Build zxcvbn (all targets)
         run: scripts/build-zxcvbn.sh
-      - name: Build dictionaries
-        run: scripts/build-dictionaries.sh en czsk
+      - name: Build dictionaries (all languages)
+        run: scripts/build-dictionaries.sh
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
@@ -41,4 +42,5 @@ jobs:
             core/native/zxcvbn/*/libzxcvbn.a
             core/native/zxcvbn/src/
             core/native/dictionaries/*.dict
+            core/native/dictionaries/NOTICE-dictionaries.md
             core/native/test-resources/

@@ -153,5 +153,5 @@ fun KotlinNativeTarget.setupCinterop() {
 
 // Dictionaries available to tests via loadTestDictionary(TestDictionaries.X) (build-logic/test-dictionaries).
 testDictionaries {
-    names.addAll("en", "czsk")
+    names.addAll("en", "cs", "ko", "th")
 }

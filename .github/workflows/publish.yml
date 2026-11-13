@@ -35,3 +35,29 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
           ORG_GRADLE_PROJECT_version: ${{ steps.get_version.outputs.version }}
+
+  release-dictionaries:
+    # Attaches the prebuilt dictionaries (and the licenses/attributions to ship with them) to the release.
+    needs: native
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download native artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: native
+          path: native
+      - name: Package
+        working-directory: native/dictionaries
+        run: |
+          zip -q ../passphrase-meter-dictionaries.zip *.dict NOTICE-dictionaries.md
+          sha256sum *.dict NOTICE-dictionaries.md ../passphrase-meter-dictionaries.zip | sed 's#\.\./##' > SHA256SUMS
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            native/dictionaries/*.dict native/dictionaries/NOTICE-dictionaries.md \
+            native/dictionaries/SHA256SUMS native/passphrase-meter-dictionaries.zip

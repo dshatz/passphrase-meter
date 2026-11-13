@@ -111,35 +111,54 @@ class PassMeterTest {
     }
 
     @Test
-    fun testCzskDictionary() {
-        val tester = PassphraseTester
-        val words = arrayOf(
-            "spolecnosti",
-            "rozcestnik",
-            "rimskokatolicka",
-            "ceskoslovenske",
-            "historicke",
-            "ostrava",
-            "bratislava",
-            "organizacie",
-            "juhovychodnej",
-            "demokratickej",
-            "vydavatelstvo",
-            "svajciarsko"
+    fun testCzechDictionary() {
+        // Accents are removed when building the dictionary: "mezinárodní" -> "mezinarodni".
+        assertDictionaryWeakens(
+            TestDictionaries.CS,
+            "mistrovstvi", "mezinarodni", "nasledujici", "potrebujeme", "francouzsky", "skutecnosti",
+            "reprezentace", "souvislosti", "spolecnosti", "profesionalni", "poslouchejte", "obyvatelstvo",
         )
+    }
 
+    @Test
+    fun testKoreanDictionary() {
+        // Hangul is added romanized and as typed on a Dubeolsik keyboard with an English layout.
+        assertDictionaryWeakens(
+            TestDictionaries.KO,
+            "yebangjusa", "dpqkdwntk",            // 예방주사
+            "geunyeohanteseo", "rmsugksxptj",     // 그녀한테서
+            "gayagetseupnida", "rkdirpttmqslek",  // 가야겠습니다
+            "gwaenchana", "rhoscksgdk",           // 괜찮아
+        )
+    }
+
+    @Test
+    fun testThaiDictionary() {
+        // Thai is added as typed on a Kedmanee keyboard with an English layout.
+        assertDictionaryWeakens(
+            TestDictionaries.TH,
+            "gmjkoyho",   // เท่านั้น
+            "fmilyrmn",   // โทรศัพท์
+            "glnhvzhk",   // เสื้อผ้า
+            "oydgiupo",   // นักเรียน
+            "vkik0ydi",   // อาณาจักร
+            "4krpo9in",   // ภาพยนตร์
+        )
+    }
+
+    /** The words are rated GOOD/STRONG without a dictionary and VERY_WEAK/WEAK with [dictionary]. */
+    private fun assertDictionaryWeakens(dictionary: String, vararg words: String) {
+        val tester = PassphraseTester
+        tester.freeDictionary()
         for (word in words) {
             val result = tester.testPassword(word)
-            assertTrue(result == PasswordStrength.GOOD || result == PasswordStrength.STRONG)
+            assertTrue(result == PasswordStrength.GOOD || result == PasswordStrength.STRONG, message = "$word without dictionary: $result")
         }
-
-        assertTrue { loadTestDictionary(TestDictionaries.CZSK) }
-
+        assertTrue { loadTestDictionary(dictionary) }
         for (word in words) {
             val result = tester.testPassword(word)
-            assertTrue(result == PasswordStrength.VERY_WEAK || result == PasswordStrength.WEAK)
+            assertTrue(result == PasswordStrength.VERY_WEAK || result == PasswordStrength.WEAK, message = "$word with $dictionary: $result")
         }
-
         tester.freeDictionary()
     }
 
