@@ -52,33 +52,39 @@ kotlin {
         }
     }
 
-    val desktopNatives = listOf(
-        linuxX64(),
-        linuxArm64(),
-        mingwX64(),
-        macosX64(),
-        macosArm64(),
-    )
+    val desktopNatives = optionalTargets.run {
+        listOfNotNull(
+            linuxX64(),
+            linuxArm64(),
+            mingwX64(),
+            macosX64(),
+            macosArm64(),
+        )
+    }
 
     jvm {
         bundlesNatives(desktopNatives)
     }
 
-    listOf(
-        iosArm64(),
-        iosX64(),
-        iosSimulatorArm64()
-    ).forEach { iosTarget ->
-        iosTarget.binaries.framework {
-            baseName = "passphrase-meter"
-            isStatic = true
+    optionalTargets {
+        listOfNotNull(
+            iosArm64(),
+            iosX64(),
+            iosSimulatorArm64()
+        ).forEach { iosTarget ->
+            iosTarget.binaries.framework {
+                baseName = "passphrase-meter"
+                isStatic = true
+            }
+            iosTarget.setupCinterop()
         }
-        iosTarget.setupCinterop()
     }
-    val androidNatives = listOf(
-        androidNativeX64(),
-        androidNativeArm64(),
-    )
+    val androidNatives = optionalTargets.run {
+        listOfNotNull(
+            androidNativeX64(),
+            androidNativeArm64(),
+        )
+    }
     val native = desktopNatives + androidNatives
 
     native.forEach {
