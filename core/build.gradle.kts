@@ -104,6 +104,7 @@ kotlin {
         namespace = "com.dshatz.passphrasemeter.core"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
+        aarMetadata.minCompileSdk = libs.versions.android.minCompileSdk.get().toInt()
         // Needed for assets in device tests (test dictionaries, see build-logic test-dictionaries).
         androidResources {
             enable = true

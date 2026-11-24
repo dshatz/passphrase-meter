@@ -2,8 +2,9 @@
 agp = "9.1.1"
 android-compileSdk = "37"
 android-minSdk = "24"
+android-minCompileSdk = "35"
 kotlin = "2.4.21"
-jni = "2.4.0-Beta02"
+jni = "2.4.0-Beta05"
 publish = "0.37.0"
 
 [libraries]
